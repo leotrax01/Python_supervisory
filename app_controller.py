@@ -74,7 +74,7 @@ class MonitoringController:
                 continue
 
             try:
-                valores = self.monitor.read_words()
+                valores = self.monitor.read_fault_values()
                 self._last_success_read = time.time()
 
                 if self.monitor.has_state_changed(valores):

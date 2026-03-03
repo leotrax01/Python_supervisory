@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import threading
 from typing import Dict, List, Set
 
 import pymcprotocol
@@ -13,68 +14,84 @@ import pymcprotocol
 class PLCConfig:
     ip: str = "192.168.0.10"
     port: int = 5000
-    head_device: str = "D1000"
-    read_size: int = 3
 
 
-FALHAS: Dict[int, str] = {
-    0: "Falha Motor Principal",
-    1: "Falha Inversor",
-    2: "Emergência Acionada",
-    3: "Sobrecarga",
-    4: "Sensor Desalinhado",
-    5: "Falha Comunicação CC-Link",
+# Endereço D -> descrição
+FALHAS_PADRAO: Dict[int, str] = {
+    1000: "Falha Motor Principal",
+    1001: "Falha Inversor",
+    1002: "Emergência Acionada",
+    1003: "Sobrecarga",
+    1004: "Sensor Desalinhado",
+    1005: "Falha Comunicação CC-Link",
 }
 
 
 class PLCFaultMonitor:
-    """Lê palavras do PLC e converte bits para falhas ativas/inativas."""
+    """Lê endereços D do PLC e informa quais falhas estão ativas."""
 
     def __init__(self, config: PLCConfig | None = None, falhas: Dict[int, str] | None = None) -> None:
         self.config = config or PLCConfig()
-        self.falhas = falhas or FALHAS
         self._plc = pymcprotocol.Type3E()
-        self._estado_anterior: List[int] = [0] * self.config.read_size
+
+        self._lock = threading.Lock()
+        self.falhas: Dict[int, str] = dict(falhas or FALHAS_PADRAO)
+        self._estado_anterior: Dict[int, int] = {}
 
     def connect(self) -> None:
-        """Abre conexão com o PLC."""
         self._plc.connect(self.config.ip, self.config.port)
 
     def disconnect(self) -> None:
-        """Fecha conexão com o PLC, se disponível."""
         close_fn = getattr(self._plc, "close", None)
         if callable(close_fn):
             close_fn()
 
-    def read_words(self) -> List[int]:
-        """Lê bloco de words configurado no PLC."""
-        values = self._plc.batchread_wordunits(
-            headdevice=self.config.head_device,
-            readsize=self.config.read_size,
+    def add_fault(self, d_address: int, description: str) -> None:
+        with self._lock:
+            self.falhas[d_address] = description
+            self._estado_anterior.pop(d_address, None)
+
+    def get_faults(self) -> Dict[int, str]:
+        with self._lock:
+            return dict(self.falhas)
+
+    def read_fault_values(self) -> Dict[int, int]:
+        faults = self.get_faults()
+        if not faults:
+            return {}
+
+        min_addr = min(faults)
+        max_addr = max(faults)
+        read_size = (max_addr - min_addr) + 1
+
+        valores = self._plc.batchread_wordunits(
+            headdevice=f"D{min_addr}",
+            readsize=read_size,
         )
-        return list(values)
 
-    def active_faults(self, values: List[int]) -> Set[int]:
-        """Extrai os bits de falha ativos a partir da leitura de words."""
-        ativos: Set[int] = set()
+        values_by_addr: Dict[int, int] = {}
+        for addr in faults:
+            values_by_addr[addr] = int(valores[addr - min_addr])
 
-        for word_value in values:
-            for bit in self.falhas:
-                if (word_value >> bit) & 1:
-                    ativos.add(bit)
+        return values_by_addr
 
-        return ativos
-
-    def has_state_changed(self, values: List[int]) -> bool:
-        changed = values != self._estado_anterior
+    def has_state_changed(self, values_by_addr: Dict[int, int]) -> bool:
+        changed = values_by_addr != self._estado_anterior
         if changed:
-            self._estado_anterior = list(values)
+            self._estado_anterior = dict(values_by_addr)
         return changed
 
-    def build_log_lines(self, active_bits: Set[int]) -> List[str]:
-        """Monta as linhas de log para as falhas ativas no instante atual."""
+    def active_faults(self, values_by_addr: Dict[int, int]) -> Set[int]:
+        ativos: Set[int] = set()
+        for addr, value in values_by_addr.items():
+            if value != 0:
+                ativos.add(addr)
+        return ativos
+
+    def build_log_lines(self, active_addresses: Set[int]) -> List[str]:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        return [f"[{timestamp}] {self.falhas[bit]} ATIVA" for bit in sorted(active_bits)]
+        faults = self.get_faults()
+        return [f"[{timestamp}] D{addr} - {faults[addr]} ATIVA" for addr in sorted(active_addresses) if addr in faults]
 
 
-__all__ = ["PLCConfig", "PLCFaultMonitor", "FALHAS"]
+__all__ = ["PLCConfig", "PLCFaultMonitor", "FALHAS_PADRAO"]
