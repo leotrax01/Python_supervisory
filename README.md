@@ -12,9 +12,15 @@ Comando:
 pip install pymcprotocol
 ```
 
+## Banco de dados
+
+- O cadastro de falhas usa SQLite no arquivo local `faults.db`.
+- Não é necessário instalar biblioteca extra para SQLite (já incluso na biblioteca padrão do Python via `sqlite3`).
+
 ## Dependências já inclusas no Python
 
 - `tkinter`
+- `sqlite3`
 - `threading`
 - `time`
 - `datetime`

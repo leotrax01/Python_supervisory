@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import threading
 from typing import Dict, List, Set
 
 import pymcprotocol
+
+from fault_db import FaultRepository
 
 
 @dataclass(frozen=True)
@@ -16,7 +17,6 @@ class PLCConfig:
     port: int = 5000
 
 
-# Endereço D -> descrição
 FALHAS_PADRAO: Dict[int, str] = {
     1000: "Falha Motor Principal",
     1001: "Falha Inversor",
@@ -30,12 +30,11 @@ FALHAS_PADRAO: Dict[int, str] = {
 class PLCFaultMonitor:
     """Lê endereços D do PLC e informa quais falhas estão ativas."""
 
-    def __init__(self, config: PLCConfig | None = None, falhas: Dict[int, str] | None = None) -> None:
+    def __init__(self, config: PLCConfig | None = None, repository: FaultRepository | None = None) -> None:
         self.config = config or PLCConfig()
         self._plc = pymcprotocol.Type3E()
-
-        self._lock = threading.Lock()
-        self.falhas: Dict[int, str] = dict(falhas or FALHAS_PADRAO)
+        self.repository = repository or FaultRepository()
+        self.repository.seed_defaults(FALHAS_PADRAO)
         self._estado_anterior: Dict[int, int] = {}
 
     def connect(self) -> None:
@@ -46,14 +45,19 @@ class PLCFaultMonitor:
         if callable(close_fn):
             close_fn()
 
+    def close(self) -> None:
+        self.repository.close()
+
     def add_fault(self, d_address: int, description: str) -> None:
-        with self._lock:
-            self.falhas[d_address] = description
-            self._estado_anterior.pop(d_address, None)
+        self.repository.upsert_fault(d_address, description)
+        self._estado_anterior.pop(d_address, None)
+
+    def delete_fault(self, d_address: int) -> None:
+        self.repository.delete_fault(d_address)
+        self._estado_anterior.pop(d_address, None)
 
     def get_faults(self) -> Dict[int, str]:
-        with self._lock:
-            return dict(self.falhas)
+        return self.repository.faults_map()
 
     def read_fault_values(self) -> Dict[int, int]:
         faults = self.get_faults()
@@ -69,11 +73,7 @@ class PLCFaultMonitor:
             readsize=read_size,
         )
 
-        values_by_addr: Dict[int, int] = {}
-        for addr in faults:
-            values_by_addr[addr] = int(valores[addr - min_addr])
-
-        return values_by_addr
+        return {addr: int(valores[addr - min_addr]) for addr in faults}
 
     def has_state_changed(self, values_by_addr: Dict[int, int]) -> bool:
         changed = values_by_addr != self._estado_anterior
@@ -82,11 +82,7 @@ class PLCFaultMonitor:
         return changed
 
     def active_faults(self, values_by_addr: Dict[int, int]) -> Set[int]:
-        ativos: Set[int] = set()
-        for addr, value in values_by_addr.items():
-            if value != 0:
-                ativos.add(addr)
-        return ativos
+        return {addr for addr, value in values_by_addr.items() if value != 0}
 
     def build_log_lines(self, active_addresses: Set[int]) -> List[str]:
         timestamp = datetime.now().strftime("%H:%M:%S")

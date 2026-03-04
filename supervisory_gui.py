@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox, scrolledtext
+from tkinter import messagebox, scrolledtext, ttk
 
 from app_controller import MonitoringController
 from plc_monitor import PLCFaultMonitor
@@ -15,16 +15,16 @@ class SupervisoryApp:
 
         self.root = tk.Tk()
         self.root.title("SCADA 4.0 - Monitor de Falhas")
-        self.root.geometry("860x620")
+        self.root.geometry("900x650")
         self.root.configure(bg="black")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        self.labels_falhas: dict[int, tk.Label] = {}
         self.connection_status = tk.StringVar(value="Desconectado")
+        self.active_faults_var = tk.StringVar(value="Nenhuma falha ativa.")
 
         self.controller = MonitoringController(
             monitor=self.monitor,
-            on_faults=lambda bits: self.root.after(0, self._render_state, bits),
+            on_faults=lambda bits: self.root.after(0, self._render_active_faults, bits),
             on_log=lambda line: self.root.after(0, self._append_log, line),
             on_connection_change=lambda is_ok, msg: self.root.after(0, self._on_connection_change, is_ok, msg),
         )
@@ -32,14 +32,13 @@ class SupervisoryApp:
         self._build_ui()
 
     def _build_ui(self) -> None:
-        titulo = tk.Label(
+        tk.Label(
             self.root,
             text="MONITOR DE FALHAS",
             font=("Arial", 20, "bold"),
             fg="white",
             bg="black",
-        )
-        titulo.pack(pady=8)
+        ).pack(pady=8)
 
         control_frame = tk.Frame(self.root, bg="black")
         control_frame.pack(pady=6)
@@ -55,34 +54,63 @@ class SupervisoryApp:
             bg="black",
         ).pack(side=tk.LEFT, padx=12)
 
-        cadastro = tk.LabelFrame(
-            self.root,
-            text="Cadastro de falha (Endereço D + Descrição)",
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.tab_ativas = tk.Frame(notebook, bg="black")
+        self.tab_cadastro = tk.Frame(notebook, bg="#1a1a1a")
+        notebook.add(self.tab_ativas, text="Falhas Ativas")
+        notebook.add(self.tab_cadastro, text="Falhas Cadastradas")
+
+        self._build_active_tab()
+        self._build_registry_tab()
+
+    def _build_active_tab(self) -> None:
+        tk.Label(
+            self.tab_ativas,
+            text="Somente falhas ativas no momento:",
+            font=("Arial", 12, "bold"),
             fg="white",
             bg="black",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=8,
-        )
-        cadastro.pack(fill=tk.X, padx=10, pady=8)
+        ).pack(anchor="w", padx=10, pady=(10, 2))
 
-        tk.Label(cadastro, text="Endereço D:", fg="white", bg="black").grid(row=0, column=0, sticky="w")
-        self.entry_d = tk.Entry(cadastro, width=12)
+        tk.Label(
+            self.tab_ativas,
+            textvariable=self.active_faults_var,
+            justify=tk.LEFT,
+            font=("Arial", 12),
+            fg="red",
+            bg="black",
+            anchor="w",
+        ).pack(fill=tk.X, padx=10)
+
+        self.log_area = scrolledtext.ScrolledText(self.tab_ativas, width=100, height=24)
+        self.log_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+    def _build_registry_tab(self) -> None:
+        form = tk.Frame(self.tab_cadastro, bg="#1a1a1a")
+        form.pack(fill=tk.X, padx=10, pady=10)
+
+        tk.Label(form, text="Endereço D:", fg="white", bg="#1a1a1a").grid(row=0, column=0, sticky="w")
+        self.entry_d = tk.Entry(form, width=12)
         self.entry_d.insert(0, "D1006")
         self.entry_d.grid(row=0, column=1, padx=6)
 
-        tk.Label(cadastro, text="Descrição:", fg="white", bg="black").grid(row=0, column=2, sticky="w")
-        self.entry_desc = tk.Entry(cadastro, width=40)
+        tk.Label(form, text="Descrição:", fg="white", bg="#1a1a1a").grid(row=0, column=2, sticky="w")
+        self.entry_desc = tk.Entry(form, width=40)
         self.entry_desc.grid(row=0, column=3, padx=6)
 
-        tk.Button(cadastro, text="Cadastrar Falha", command=self._register_fault).grid(row=0, column=4, padx=6)
+        tk.Button(form, text="Cadastrar", command=self._register_fault).grid(row=0, column=4, padx=6)
+        tk.Button(form, text="Deletar selecionada", command=self._delete_selected_fault).grid(row=0, column=5, padx=6)
 
-        self.frame_falhas = tk.Frame(self.root, bg="black")
-        self.frame_falhas.pack(fill=tk.X, padx=10)
-        self._rebuild_fault_labels()
+        self.tree = ttk.Treeview(self.tab_cadastro, columns=("addr", "desc"), show="headings", height=20)
+        self.tree.heading("addr", text="Endereço")
+        self.tree.heading("desc", text="Descrição")
+        self.tree.column("addr", width=120, anchor=tk.CENTER)
+        self.tree.column("desc", width=620, anchor=tk.W)
+        self.tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        self.log_area = scrolledtext.ScrolledText(self.root, width=100, height=14)
-        self.log_area.pack(pady=10)
+        self._refresh_registered_faults()
 
     def _parse_d_address(self, raw: str) -> int:
         addr = raw.strip().upper().replace(" ", "")
@@ -105,29 +133,31 @@ class SupervisoryApp:
             return
 
         self.monitor.add_fault(d_address, description)
-        self._rebuild_fault_labels()
-        self._append_log(f"Falha cadastrada: D{d_address} - {description}")
-
+        self._refresh_registered_faults()
+        self._append_log(f"Falha cadastrada/atualizada: D{d_address} - {description}")
         self.entry_d.delete(0, tk.END)
         self.entry_desc.delete(0, tk.END)
 
-    def _rebuild_fault_labels(self) -> None:
-        for w in self.frame_falhas.winfo_children():
-            w.destroy()
+    def _delete_selected_fault(self) -> None:
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("Cadastro", "Selecione uma falha para deletar.")
+            return
 
-        self.labels_falhas.clear()
-        for d_address, descricao in sorted(self.monitor.get_faults().items()):
-            lbl = tk.Label(
-                self.frame_falhas,
-                text=f"D{d_address} - {descricao}",
-                font=("Arial", 13),
-                fg="green",
-                bg="black",
-                width=60,
-                anchor="w",
-            )
-            lbl.pack(anchor="w")
-            self.labels_falhas[d_address] = lbl
+        item_id = selected[0]
+        addr_text = self.tree.item(item_id, "values")[0]
+        d_address = self._parse_d_address(str(addr_text))
+
+        self.monitor.delete_fault(d_address)
+        self._refresh_registered_faults()
+        self._append_log(f"Falha deletada: D{d_address}")
+
+    def _refresh_registered_faults(self) -> None:
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        for addr, desc in sorted(self.monitor.get_faults().items()):
+            self.tree.insert("", tk.END, values=(f"D{addr}", desc))
 
     def start(self) -> None:
         self.controller.start()
@@ -139,9 +169,10 @@ class SupervisoryApp:
             messagebox.showinfo("Conexão", message)
         self._append_log(message)
 
-    def _render_state(self, active_addresses: set[int]) -> None:
-        for d_address, label in self.labels_falhas.items():
-            label.config(fg="red" if d_address in active_addresses else "green")
+    def _render_active_faults(self, active_addresses: set[int]) -> None:
+        all_faults = self.monitor.get_faults()
+        active_lines = [f"D{addr} - {all_faults[addr]}" for addr in sorted(active_addresses) if addr in all_faults]
+        self.active_faults_var.set("\n".join(active_lines) if active_lines else "Nenhuma falha ativa.")
 
         for line in self.monitor.build_log_lines(active_addresses):
             self._append_log(line)
@@ -152,6 +183,7 @@ class SupervisoryApp:
 
     def on_close(self) -> None:
         self.controller.stop()
+        self.monitor.close()
         self.root.destroy()
 
 
