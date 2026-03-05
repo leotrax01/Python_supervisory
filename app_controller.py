@@ -15,7 +15,7 @@ class MonitoringController:
     def __init__(
         self,
         monitor: PLCFaultMonitor,
-        on_faults: Callable[[set[int]], None],
+        on_faults: Callable[[set[str]], None],
         on_log: Callable[[str], None],
         on_connection_change: Callable[[bool, str], None],
         poll_interval: float = 0.5,

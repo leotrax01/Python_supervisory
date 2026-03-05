@@ -120,9 +120,9 @@ class SupervisoryApp:
         form = tk.Frame(self.tab_cadastro, bg="#1a1a1a")
         form.pack(fill=tk.X, padx=10, pady=10)
 
-        tk.Label(form, text="Endereço D:", fg="white", bg="#1a1a1a").grid(row=0, column=0, sticky="w")
-        self.entry_d = tk.Entry(form, width=12)
-        self.entry_d.insert(0, "D1006")
+        tk.Label(form, text="Ponto PLC:", fg="white", bg="#1a1a1a").grid(row=0, column=0, sticky="w")
+        self.entry_d = tk.Entry(form, width=14)
+        self.entry_d.insert(0, "D6000.0")
         self.entry_d.grid(row=0, column=1, padx=6)
 
         tk.Label(form, text="Descrição:", fg="white", bg="#1a1a1a").grid(row=0, column=2, sticky="w")
@@ -133,21 +133,13 @@ class SupervisoryApp:
         tk.Button(form, text="Deletar selecionada", command=self._delete_selected_fault).grid(row=0, column=5, padx=6)
 
         self.tree = ttk.Treeview(self.tab_cadastro, columns=("addr", "desc"), show="headings", height=20)
-        self.tree.heading("addr", text="Endereço")
+        self.tree.heading("addr", text="Ponto")
         self.tree.heading("desc", text="Descrição")
         self.tree.column("addr", width=120, anchor=tk.CENTER)
         self.tree.column("desc", width=640, anchor=tk.W)
         self.tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         self._refresh_registered_faults()
-
-    def _parse_d_address(self, raw: str) -> int:
-        addr = raw.strip().upper().replace(" ", "")
-        if addr.startswith("D"):
-            addr = addr[1:]
-        if not addr.isdigit():
-            raise ValueError("Endereço inválido. Use formato D1000 ou 1000.")
-        return int(addr)
 
     def _start_connection(self) -> None:
         ip = self.entry_ip.get().strip()
@@ -170,20 +162,21 @@ class SupervisoryApp:
             self.controller.start()
 
     def _register_fault(self) -> None:
-        try:
-            d_address = self._parse_d_address(self.entry_d.get())
-        except ValueError as exc:
-            messagebox.showerror("Cadastro", str(exc))
-            return
+        point_key = self.entry_d.get().strip()
 
         description = self.entry_desc.get().strip()
         if not description:
             messagebox.showerror("Cadastro", "Informe a descrição da falha.")
             return
 
-        self.monitor.add_fault(d_address, description)
+        try:
+            self.monitor.add_fault(point_key, description)
+        except ValueError as exc:
+            messagebox.showerror("Cadastro", str(exc))
+            return
+
         self._refresh_registered_faults()
-        self._append_log(f"Falha cadastrada/atualizada: D{d_address} - {description}")
+        self._append_log(f"Falha cadastrada/atualizada: {point_key.upper()} - {description}")
         self.entry_d.delete(0, tk.END)
         self.entry_desc.delete(0, tk.END)
 
@@ -194,19 +187,23 @@ class SupervisoryApp:
             return
 
         item_id = selected[0]
-        addr_text = self.tree.item(item_id, "values")[0]
-        d_address = self._parse_d_address(str(addr_text))
+        point_text = str(self.tree.item(item_id, "values")[0])
 
-        self.monitor.delete_fault(d_address)
+        try:
+            self.monitor.delete_fault(point_text)
+        except ValueError as exc:
+            messagebox.showerror("Cadastro", str(exc))
+            return
+
         self._refresh_registered_faults()
-        self._append_log(f"Falha deletada: D{d_address}")
+        self._append_log(f"Falha deletada: {point_text}")
 
     def _refresh_registered_faults(self) -> None:
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        for addr, desc in sorted(self.monitor.get_faults().items()):
-            self.tree.insert("", tk.END, values=(f"D{addr}", desc))
+        for point, desc in sorted(self.monitor.get_faults().items()):
+            self.tree.insert("", tk.END, values=(point, desc))
 
     def start(self) -> None:
         self.root.mainloop()
@@ -217,12 +214,12 @@ class SupervisoryApp:
             messagebox.showinfo("Conexão", message)
         self._append_log(message)
 
-    def _render_active_faults(self, active_addresses: set[int]) -> None:
+    def _render_active_faults(self, active_points: set[str]) -> None:
         all_faults = self.monitor.get_faults()
-        active_lines = [f"D{addr} - {all_faults[addr]}" for addr in sorted(active_addresses) if addr in all_faults]
+        active_lines = [f"{point} - {all_faults[point]}" for point in sorted(active_points) if point in all_faults]
         self.active_faults_var.set("\n".join(active_lines) if active_lines else "Nenhuma falha ativa.")
 
-        for line in self.monitor.build_log_lines(active_addresses):
+        for line in self.monitor.build_log_lines(active_points):
             self._append_log(line)
 
     def _append_log(self, line: str) -> None:

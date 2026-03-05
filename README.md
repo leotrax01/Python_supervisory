@@ -35,3 +35,13 @@ pip install pymcprotocol
 - Clique em **Conectar / Iniciar** para iniciar o monitoramento.
 - Use **Pausar** para pausar as leituras.
 - Após iniciar, o sistema tenta **reconexão automática** em caso de perda de comunicação.
+
+
+## Cadastro de falhas por Word e Bit
+
+Na aba de cadastro, você pode criar falhas por:
+
+- Word inteira: `D6000`
+- Bit da word: `D6000.0` até `D6000.F` (equivalente a bits 0..15)
+
+Quando o ponto cadastrado for bit, o sistema monitora apenas aquele bit da word.
