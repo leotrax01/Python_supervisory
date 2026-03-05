@@ -37,6 +37,10 @@ class PLCFaultMonitor:
         self.repository.seed_defaults(FALHAS_PADRAO)
         self._estado_anterior: Dict[int, int] = {}
 
+
+    def set_connection_params(self, ip: str, port: int) -> None:
+        self.config = PLCConfig(ip=ip, port=port)
+
     def connect(self) -> None:
         self._plc.connect(self.config.ip, self.config.port)
 

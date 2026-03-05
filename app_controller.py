@@ -36,8 +36,11 @@ class MonitoringController:
         self._connected = False
         self._last_success_read = 0.0
 
+    def is_running(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
+
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
+        if self.is_running():
             self.resume_monitoring()
             return
 
@@ -45,6 +48,10 @@ class MonitoringController:
         self._pause_event.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+
+    def restart_monitoring(self) -> None:
+        self.stop(final_message="Reiniciando monitoramento...")
+        self.start()
 
     def pause_monitoring(self) -> None:
         self._pause_event.set()
@@ -54,11 +61,12 @@ class MonitoringController:
         self._pause_event.clear()
         self.on_log("Monitoramento em START.")
 
-    def stop(self) -> None:
+    def stop(self, final_message: str = "Aplicação finalizada.") -> None:
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2)
-        self._disconnect("Aplicação finalizada.")
+        self._thread = None
+        self._disconnect(final_message)
 
     def _run(self) -> None:
         self._connect_if_needed()

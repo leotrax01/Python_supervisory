@@ -26,3 +26,12 @@ pip install pymcprotocol
 - `datetime`
 
 > Observação: `tkinter` faz parte da biblioteca padrão do Python, mas em alguns Linux pode ser necessário instalar o pacote do sistema (`python3-tk`).
+
+
+## Como conectar ao PLC na interface
+
+- Abra a aba **Conexão PLC**.
+- Informe **IP** e **porta** manualmente.
+- Clique em **Conectar / Iniciar** para iniciar o monitoramento.
+- Use **Pausar** para pausar as leituras.
+- Após iniciar, o sistema tenta **reconexão automática** em caso de perda de comunicação.

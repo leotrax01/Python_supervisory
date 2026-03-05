@@ -15,7 +15,7 @@ class SupervisoryApp:
 
         self.root = tk.Tk()
         self.root.title("SCADA 4.0 - Monitor de Falhas")
-        self.root.geometry("900x650")
+        self.root.geometry("920x680")
         self.root.configure(bg="black")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -40,30 +40,59 @@ class SupervisoryApp:
             bg="black",
         ).pack(pady=8)
 
-        control_frame = tk.Frame(self.root, bg="black")
-        control_frame.pack(pady=6)
-
-        tk.Button(control_frame, text="START", width=12, command=self.controller.resume_monitoring).pack(side=tk.LEFT, padx=5)
-        tk.Button(control_frame, text="PAUSE", width=12, command=self.controller.pause_monitoring).pack(side=tk.LEFT, padx=5)
-
+        status_frame = tk.Frame(self.root, bg="black")
+        status_frame.pack(pady=4)
         tk.Label(
-            control_frame,
+            status_frame,
+            text="Status conexão:",
+            font=("Arial", 11, "bold"),
+            fg="white",
+            bg="black",
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(
+            status_frame,
             textvariable=self.connection_status,
             font=("Arial", 11, "bold"),
             fg="cyan",
             bg="black",
-        ).pack(side=tk.LEFT, padx=12)
+        ).pack(side=tk.LEFT)
 
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
+        self.tab_conexao = tk.Frame(notebook, bg="#1a1a1a")
         self.tab_ativas = tk.Frame(notebook, bg="black")
         self.tab_cadastro = tk.Frame(notebook, bg="#1a1a1a")
+        notebook.add(self.tab_conexao, text="Conexão PLC")
         notebook.add(self.tab_ativas, text="Falhas Ativas")
         notebook.add(self.tab_cadastro, text="Falhas Cadastradas")
 
+        self._build_connection_tab()
         self._build_active_tab()
         self._build_registry_tab()
+
+    def _build_connection_tab(self) -> None:
+        form = tk.Frame(self.tab_conexao, bg="#1a1a1a")
+        form.pack(fill=tk.X, padx=10, pady=12)
+
+        tk.Label(form, text="IP do PLC:", fg="white", bg="#1a1a1a").grid(row=0, column=0, sticky="w")
+        self.entry_ip = tk.Entry(form, width=20)
+        self.entry_ip.insert(0, self.monitor.config.ip)
+        self.entry_ip.grid(row=0, column=1, padx=6)
+
+        tk.Label(form, text="Porta:", fg="white", bg="#1a1a1a").grid(row=0, column=2, sticky="w")
+        self.entry_port = tk.Entry(form, width=8)
+        self.entry_port.insert(0, str(self.monitor.config.port))
+        self.entry_port.grid(row=0, column=3, padx=6)
+
+        tk.Button(form, text="Conectar / Iniciar", command=self._start_connection).grid(row=0, column=4, padx=8)
+        tk.Button(form, text="Pausar", command=self.controller.pause_monitoring).grid(row=0, column=5, padx=8)
+
+        hint = (
+            "Ao clicar em Conectar/Iniciar, o sistema tenta conexão com o PLC e\n"
+            "mantém tentativas automáticas de reconexão em caso de falha."
+        )
+        tk.Label(self.tab_conexao, text=hint, fg="#cfcfcf", bg="#1a1a1a", justify=tk.LEFT).pack(anchor="w", padx=10)
 
     def _build_active_tab(self) -> None:
         tk.Label(
@@ -107,7 +136,7 @@ class SupervisoryApp:
         self.tree.heading("addr", text="Endereço")
         self.tree.heading("desc", text="Descrição")
         self.tree.column("addr", width=120, anchor=tk.CENTER)
-        self.tree.column("desc", width=620, anchor=tk.W)
+        self.tree.column("desc", width=640, anchor=tk.W)
         self.tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         self._refresh_registered_faults()
@@ -119,6 +148,26 @@ class SupervisoryApp:
         if not addr.isdigit():
             raise ValueError("Endereço inválido. Use formato D1000 ou 1000.")
         return int(addr)
+
+    def _start_connection(self) -> None:
+        ip = self.entry_ip.get().strip()
+        port_text = self.entry_port.get().strip()
+
+        if not ip:
+            messagebox.showerror("Conexão", "Informe o IP do PLC.")
+            return
+
+        if not port_text.isdigit():
+            messagebox.showerror("Conexão", "Porta inválida.")
+            return
+
+        port = int(port_text)
+        self.monitor.set_connection_params(ip=ip, port=port)
+
+        if self.controller.is_running():
+            self.controller.restart_monitoring()
+        else:
+            self.controller.start()
 
     def _register_fault(self) -> None:
         try:
@@ -160,7 +209,6 @@ class SupervisoryApp:
             self.tree.insert("", tk.END, values=(f"D{addr}", desc))
 
     def start(self) -> None:
-        self.controller.start()
         self.root.mainloop()
 
     def _on_connection_change(self, is_connected: bool, message: str) -> None:
